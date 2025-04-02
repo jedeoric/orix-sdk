@@ -152,27 +152,6 @@ def manage_dynlib(rawfile: bytearray) -> list[bytearray, bool]:
     return mapping_table, found_dynlib
 
 
-def Searchdynamiclibs(file_path, search_term, binary):
-    try:
-        # Ouvrir le fichier en mode binaire
-        with open(file_path, 'rb') as file:
-            # Lire le contenu du fichier
-            content = file.read()
-
-            # Convertir le terme de recherche en bytes
-            search_term_bytes = search_term.encode('utf-8')
-
-            # Chercher le terme dans le contenu du fichier
-            if search_term_bytes in content:
-                print(f"Terme trouvé dans le fichier : {search_term}")
-            else:
-                print(f"Terme non trouvé dans le fichier : {search_term}")
-
-    except FileNotFoundError:
-        print(f"Le fichier {file_path} n'existe pas.")
-    except Exception as e:
-        print(f"Une erreur s'est produite : {e}")
-
 # copy header and program and modify header
 
 def Copyheader(ftap, binary_version, map):
