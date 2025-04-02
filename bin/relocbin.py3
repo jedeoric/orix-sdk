@@ -11,7 +11,7 @@ import sys
 
 import argparse
 
-__version__ = '0.2'
+__version__ = '0.3'
 
 # pprint(args)
 
@@ -93,6 +93,86 @@ class Header:
         return self.header[18] + self.header[19] * 256
 
 
+def modify_header_dynlib(header, size_mapping_table: int):
+    # Set the size of the mapping table in the header
+    # @param header: bytearray
+    # @param size_mapping_table: int
+    # @return: header (bytearray)
+    # @example
+    #   modify_header_dynlib(header, size_mapping_table)
+    # @note
+    #  This function is used to set the size of the mapping table in the header.
+    #  The size is set in the reserved field of the header.
+
+    header_mutable = bytearray(header['reserved'])
+    header_mutable[2] = (size_mapping_table)  & 0xFF
+    header_mutable[3] = ((size_mapping_table) >> 8) & 0xFF
+    header['reserved'] = bytes(header_mutable)
+    return header
+
+
+def manage_dynlib(rawfile: bytearray) -> list[bytearray, bool]:
+    # Search for dynamic libraries in rawfile. Pattern search : dynlib_
+    #
+    # @param rawfile: bytearray
+    # @return: mapping_table (byte_array), found_dynlib: bool
+    #
+    # @example
+    #   manage_dynlib(rawfile)
+    #
+    # @note
+    #  This function is used to search for dynamic libraries in the rawfile.
+    #  The pattern search is 'dynlib_'.
+
+    mapping_table = bytearray([0, 255])
+    found_dynlib = False
+
+    for i in range(len(rawfile)):
+        if rawfile[i:i + 7] == b'dynlib_':
+            print(f"Dynamic library found at offset {i}")
+
+            # search 0 after dynlib_ is found
+            t = i + 7
+            while rawfile[t] != 0:
+                t += 1
+            t += 1
+
+            print(f"Dynamic library name: {rawfile[i + 7:t - 1].decode('utf-8')}")
+
+            mapping_table.extend(t.to_bytes(2, byteorder='little'))
+            # +1 to the number of dynamic libraries
+            mapping_table [0] += 1
+
+            found_dynlib = True
+
+
+    for index, octet in enumerate(mapping_table):
+        print(f"Offset of dynlib {index}: {octet:02x}")
+    print(f"Dynlib table length : {len(mapping_table)}")
+    return mapping_table, found_dynlib
+
+
+def Searchdynamiclibs(file_path, search_term, binary):
+    try:
+        # Ouvrir le fichier en mode binaire
+        with open(file_path, 'rb') as file:
+            # Lire le contenu du fichier
+            content = file.read()
+
+            # Convertir le terme de recherche en bytes
+            search_term_bytes = search_term.encode('utf-8')
+
+            # Chercher le terme dans le contenu du fichier
+            if search_term_bytes in content:
+                print(f"Terme trouvé dans le fichier : {search_term}")
+            else:
+                print(f"Terme non trouvé dans le fichier : {search_term}")
+
+    except FileNotFoundError:
+        print(f"Le fichier {file_path} n'existe pas.")
+    except Exception as e:
+        print(f"Une erreur s'est produite : {e}")
+
 # copy header and program and modify header
 
 def Copyheader(ftap, binary_version, map):
@@ -152,14 +232,14 @@ def Readheader(ftap):
         header['start'] = fileStartAdr
         header['end'] = fileEndAdr
         header['exec'] = fileExecAdr
-        header['size']  = header['end']-header['start']+1
+        header['size']  = header['end'] - header['start'] + 1
 
         return header
 
     return False
 
 
-def Createheader(header, version, size):
+def Createheader(header, version, bitfield_size):
     newheader = bytearray()
 
     newheader += header['signature']
@@ -168,15 +248,20 @@ def Createheader(header, version, size):
 
     # newheader.append(header['os'])
     # newheader += header['reserved']
-    newheader += bytes([size % 256, size // 256])
+    # Set Size_bitfield
+    newheader += bytes([bitfield_size % 256, bitfield_size // 256])
     # newheader += header['reserved'][1:]
     # newheader.append(header['type'])
+    # 3 reserved bytes
     newheader += header['reserved'][2:]
-
+    # Set the offset of bitfield
     newheader += bytes([header['size'] % 256, header['size'] // 256])
+    # Set the start address
     newheader += bytes([header['start'] % 256, header['start'] // 256])
+    # Set the ennd of the memory
     newheader += bytes([header['end'] % 256, header['end'] // 256])
     # newheader += bytes([header['size'] % 256, header['size'] // 256])
+    # Set the exec address
     newheader += bytes([header['exec'] % 256, header['exec'] // 256])
     # print(header)
     # print(newheader)
@@ -184,7 +269,7 @@ def Createheader(header, version, size):
     return newheader
 
 
-def diff(file1, file2, output, formatversion, color, verbose):
+def diff(file1: str, file2: str, output, formatversion: int, color, verbose):
     i = 0
     s1 = ""
     s2 = ""
@@ -325,34 +410,93 @@ def diff(file1, file2, output, formatversion, color, verbose):
                     print("Format 3 overhead: ", n, len(offsetmap))
 
                 # Si aucun format n'est demandé, on choisi le meilleur (overhead le plus faible)
-                if formatversion is None:
-                    formatversion = (2, 3)[len(bitfieldmap) > len(offsetmap)]
+                # Le format 3 n'est pas géré dans le kernel Orix
+                # if formatversion is None:
+                #     formatversion = (2, 3)[len(bitfieldmap) > len(offsetmap)]
+
+                formatversion = 2
 
                 if output is not None:
                     print("Generate file ... ")
                     print("-Generate file version:", formatversion)
 
+                    # Checking if bynary contain dynlib. If yes, we need to add the mapping table
+                    mapping_table, founddynlib = manage_dynlib(rawfile)
+                    filesize_without_header = 0
+
+                    # Add mapping table size (in header) if dynlib found at the end of the file
+                    if founddynlib:
+                        header1['end'] += len(mapping_table)
+
                     # Get header from first file
                     if formatversion == 2:
+                        filesize_without_header = len(rawfile) + len(bitfieldmap)
+
+                        # If a dynlib is found, we set formatversion to 4
+                        if founddynlib:
+                            formatversion = 4
+                            header1['version'] = formatversion
+
                         with open(output, "wb") as orixbinary:
                             if map_size_mini < len(bitfieldmap):
                                 print("-Truncate reloc table from %d to %d (%4.2f%%)" % (len(bitfieldmap), map_size_mini, -(len(bitfieldmap)-map_size_mini)/len(bitfieldmap)*100))
+                                # Set dynlib table mapping
+                                header1 = modify_header_dynlib(header1, filesize_without_header + map_size_mini )
+
                                 orixbinary.write(Createheader(header1, formatversion, map_size_mini))
                                 orixbinary.write(rawfile)
                                 orixbinary.write(bitfieldmap[0:map_size_mini])
 
+
                             else:
-                                orixbinary.write(Createheader(header1, formatversion, len(bitfieldmap)))
+                                bitfieldmap_size = len(bitfieldmap)
+                                header1 = modify_header_dynlib(header1, filesize_without_header)
+                                orixbinary.write(Createheader(header1, formatversion, bitfieldmap_size))
                                 #orixbinary.write(Createheader(header1, formatversion, map_size_mini))
                                 orixbinary.write(rawfile)
                                 orixbinary.write(bitfieldmap)
                                 #orixbinary.write(bitfieldmap[:map_size_mini+1])
 
+
+                            # # Add mapping table if dynlib found at the end of the file
+                            if founddynlib:
+                                orixbinary.write(mapping_table)
+
+
+                    # Format 3 not managed yet in orix kernel
                     elif formatversion == 3:
+
+                        filesize_without_header = len(rawfile) + len(bitfieldmap)
+                        if founddynlib:
+                            formatversion = 5
+                            header1['version'] = formatversion
+
                         with open(output, "wb") as orixbinary:
-                            orixbinary.write(Createheader(header1, formatversion, len(offsetmap)))
+                            size = len(offsetmap)
+                            # Format 5 not managed yet in orix kernel
+                            header_mutable = bytearray(header1['reserved'])
+                            header_mutable[2] = (filesize_without_header)  & 0xFF
+                            header_mutable[3] = ((filesize_without_header) >> 8) & 0xFF
+                            header1['reserved'] = bytes(header_mutable)
+
+                            orixbinary.write(Createheader(header1, formatversion, size))
                             orixbinary.write(rawfile)
                             orixbinary.write(offsetmap)
+
+                            # Add mapping table if dynlib found at the end of the file
+                            if founddynlib:
+                                orixbinary.write(mapping_table)
+
+                    if founddynlib:
+                        if verbose:
+                            #mapping_table [mapping_table [0] * 2]
+                            print('____________________________________________________________________')
+                            print(f"Number of dynamic lib found : {mapping_table[0]}")
+                            print(mapping_table)
+                            for i in range(1, mapping_table[0] + 1):
+                                print(f"Dynamic lib {i} at offset {int.from_bytes(mapping_table[i*2:i*2+2], byteorder='little')}")
+#                            print(mapping_table)
+                            print('____________________________________________________________________')
 
             # f2.close()
         # f1.close()
