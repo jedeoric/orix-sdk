@@ -1,7 +1,9 @@
 # ORIX SDK
+
 Tools & Macros for Orix devs
 
 ## Directories
+
 - asm: Assembly sources
 - include:
 - macros: SDK Macros
@@ -12,6 +14,14 @@ Tools & Macros for Orix devs
 ## relocbin uses
 
 Relocbin is a script which convert a static binary (built with telestrat target and cfg included) into a relocatable binary format for orix
+
+It manages dynlib binary management, but Orix kernel had not been released yet for dynamic lib. The binary must contains dynlib_XXX to find dynlib routines, each dynlib pattern find will add into the end of the binary the dynlib table mapping and the header will contains dynlib offset mapping.
+
+Mapping table has this format (at this end of the binary) :
+
+Byte 0 : Number of dynlib found
+Byte 1 : always $FF (reserved for futur enhancement)
+; Next bytes : word containing the offset of the startup routine of each dynlib (length header excluded)
 
 You need to build your binary with normal telestrat target :
 
